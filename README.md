@@ -63,3 +63,19 @@ set -eu
 
 /srv/gretap.sh 2>&1
 ```
+
+### For Vultr users
+
+You need to route your traffic properly so that servers are reachable from your end.  Reference: https://skym.fi/blog/2020/07/vultr-trouble/
+
+As for the configs from this repo, all you need to do is to add lines in `bird/config/basic/routes.conf` so that it looks something like this
+
+```
+protocol static
+{
+    ipv6;
+    route (my_ip_range)/48 via my_ipv6%enp1s0;
+    route (my_ip_range)/48 via my_ipv6%enp1s0;
+    route 2001:19f0:ffff::1/128 via my_ipv6%enp1s0;
+}
+```
