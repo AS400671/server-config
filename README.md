@@ -32,6 +32,18 @@ Please note that some constants and variables were redacted for security reasons
 
 RPKI eats up a lot of memory as RPKI data is cached and compared on both RPKI and bird. so make sure to increase your swap memory in case RPKI server crashes.
 
+### IRR Filtering
+
+RPKI is currently enabled for this setup, but there are also plans to use bgpq4 (https://github.com/bgp/bgpq4) to filter direct peers and customers. 
+
+IRR filters hasn't been implemented yet since customers / peers are currently considered as a fully trusted ones, but there is a plan to add automated checks on AS-SETs.
+
+Commands to run bgpq4 would be the following (suggested by AS50058), but it is always recommended to grep and handpick some options from the help option.
+
+```sh
+bgpq4 -S $source -h $server -l $name -A4s $asset
+```
+
 ### Debugging Traffics
 
 Sometimes you might get stuck with GRETAP connections with IXPs or peers, and most of the time it may take some time to check and debug the configuration. so just install Wireshark and use `tcpdump` to capture and debug packet-wise. This is very useful even for GRETAP connections. Most of the time network just crashes because of TTL or multihop issues, so just try to check packets and see what went wrong. Wireshark is actually very friendly on BGP protocols.
