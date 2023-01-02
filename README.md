@@ -9,7 +9,7 @@ Please note that some constants and variables were redacted for security reasons
 ## Technologies used for PoPs
 
 * Bird
-    * 2.0.10: Manually compiled, the upgrade script is available
+    * 2.0.11: Manually compiled, the upgrade script is available
     * RPKI (RFC6811, RFC8893) implemented with Cloudflare's gortr
     * BGP Large Communities (RFC8092) implemented (Based on https://network.stypr.com/#community)
     * Configurations of interconnects with upstream, peers, etc.
