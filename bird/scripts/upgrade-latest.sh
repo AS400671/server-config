@@ -5,7 +5,7 @@ set -e
 # ... as the latest version from apt repo is 2-3 years old
 # ... and there are many updates on the latest version containing RPKI stability fixes and bugfixes
 
-BIRD_VERSION="2.0.10"
+BIRD_VERSION="v2.0.11"
 
 # backup first!
 mkdir -p ./backup/bird
@@ -51,8 +51,11 @@ fi
 # start..?
 echo "Starting bird..."
 systemctl daemon-reload
+sleep 2
 systemctl enable bird
+sleep 2
 systemctl status bird
+sleep 2
 systemctl start bird
 sleep 2
 systemctl status bird
