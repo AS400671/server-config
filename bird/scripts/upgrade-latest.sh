@@ -51,11 +51,14 @@ fi
 # start..?
 echo "Starting bird..."
 systemctl daemon-reload
-sleep 2
 systemctl enable bird
-sleep 2
 systemctl status bird
-sleep 2
 systemctl start bird
 sleep 2
 systemctl status bird
+
+# force upgrade
+birdc -r show proto
+systemctl restart bird
+sleep 10
+birdc -r show proto
