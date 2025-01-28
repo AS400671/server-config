@@ -1,11 +1,11 @@
 #!/bin/sh
 set -e
 
-# AS400671 uses the latest version of Bird 2
-# ... as the latest version from apt repo is 2-3 years old
-# ... and there are many updates on the latest version containing RPKI stability fixes and bugfixes
+# AS400671 uses the latest version of Bird 3.0.1
+# ... the latest version from the official debian apt repo is pretty old
+# ... and there are many updates on the latest version containing RPKI stability fixes and minor bugfixes
 
-BIRD_VERSION="v2.0.11"
+BIRD_VERSION="v3.0.1"
 
 # backup first!
 mkdir -p ./backup/bird
@@ -34,7 +34,7 @@ autoreconf
 make
 make install
 
-echo "Move back backups..."
+echo "Restore backups..."
 cd ..
 rm -rf /etc/bird/
 cp -rp ./backup/bird/ /etc/
@@ -43,9 +43,10 @@ cp -rp ./backup/bird.service /lib/systemd/system/bird.service
 chmod +x /usr/lib/bird/prepare-environment
 
 if id "bird" &>/dev/null; then
-    echo "Looks good!"
+    echo "User bird is available. Looks good!"
 else
     useradd -r -s /usr/sbin/nologin -g bird bird
+    echo "Added user bird!"
 fi
 
 # start..?
