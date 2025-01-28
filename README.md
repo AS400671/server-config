@@ -9,18 +9,18 @@ Please note that some constants and variables were redacted for security reasons
 ## Technologies used for PoPs
 
 * Bird
-    * 2.0.11: Manually compiled, the upgrade script is available
-    * RPKI (RFC6811, RFC8893) implemented with stayrtr+rpki-client   
-    * BGP Large Communities (RFC8092) implemented (Based on https://network.stypr.com/#community)
+    * 3.x: [Manually compiled](./upgrade-latest.sh)
+    * RPKI (RFC6811, RFC8893) check is implemented with `stayrtr` and `rpki-client   `
+    * BGP Large Communities (RFC8092) implemented (Check https://network.stypr.com/#community)
     * Configurations of interconnects with upstream, peers, etc.
         * Exchanges are mostly connected over GRETAP for stability
 
-* Web
+* API
     * PHP 8.x
-        * For sharing information to https://network.stypr.com/
-    * Caddy (You can use Apache and other things)
+        * For sharing information with the [Network Dashboard](https://network.stypr.com/)
+    * Caddy (Apache and other webservers can be used as an alternative)
     * Python
-        * For cronjob; used for crawling interconnected IXPs, etc.
+        * For cronjobs; used for crawling interconnected IXPs, peers, etc.
 
 * Network
     * All inbound/outbound connections go through wg0 (WireGuard)
@@ -30,7 +30,10 @@ Please note that some constants and variables were redacted for security reasons
 
 ### RPKI
 
-RPKI eats up a lot of memory as RPKI data is cached and compared on both RPKI and bird. so make sure to increase your swap memory in case RPKI server crashes.
+RPKI consumes a lot of memory as RPKI data is directly cached in the memory for comparison between RPKI client and bird daemon.
+
+Make sure to increase your memory in case your server runs on a low memory. `stayrtr` or `rpki-client` may randomly crash when the free memory space is insufficient.
+
 
 ### IRR Filtering
 
@@ -38,7 +41,7 @@ RPKI is currently enabled for this setup, but there are also plans to use bgpq4 
 
 IRR filters hasn't been implemented yet since customers / peers are currently considered as a fully trusted ones, but there is a plan to add automated checks on AS-SETs.
 
-Commands to run bgpq4 would be the following (suggested by AS50058), but it is always recommended to grep and handpick some options from the help option.
+Commands to run `bgpq4` would be the following (as suggested by AS50058), but it is always recommended to grep and handpick some options from the manual.
 
 ```sh
 bgpq4 -S $source -h $server -l $name -A4s $asset
@@ -46,11 +49,19 @@ bgpq4 -S $source -h $server -l $name -A4s $asset
 
 ### Debugging Traffics
 
-Sometimes you might get stuck with GRETAP connections with IXPs or peers, and most of the time it may take some time to check and debug the configuration. so just install Wireshark and use `tcpdump` to capture and debug packet-wise. This is very useful even for GRETAP connections. Most of the time network just crashes because of TTL or multihop issues, so just try to check packets and see what went wrong. Wireshark is actually very friendly on BGP protocols.
+Sometimes you might get stuck with GRETAP connections with IXPs or peers, and most of the time it may take some time to check and debug the configuration. 
+
+On such cases, install Wireshark and use `tcpdump` to capture and debug packets.
+
+This is very useful even for debugging GRETAP connections. 
+
+Most of the time, network connectivity fails due to TTL mismatches or multihop issues. 
+
+Check packets and see what went wrong to troubleshoot. Wireshark is actually very friendly with BGP protocols.
 
 ### GRETAP
 
-If you're using gretap, make sure that bird resets the GRETAP connection everytime bird starts/restarts.
+If you're using gretap, make sure that bird resets the GRETAP connection upon starting (and restarting) bird daemon.
 
 You can do this by editing the `/usr/lib/bird/prepare-environment` as follows
 
