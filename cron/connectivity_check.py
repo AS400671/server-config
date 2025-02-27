@@ -1,215 +1,243 @@
 #!/usr/bin/python3 -u
-#-*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 
 """
 connectivity_check.py
 
 Simple tool for checking Bird2 connectivity (for personal use)
-Developed by AS400671 (https://network.stypr.com/)
+Developed by AS400671 (https://stypr.network/)
 
-You can use description to set speed, countries and names of providers.
-
-```
-protocol bgp constant6
-{
-    description "The Constant Company LLC | 1G | US";
-    local as my_asn;
-    source address my_ipv6;
-    ...
-}
-```
-
+Example protocol description:
+    protocol bgp constant6 {
+        description "The Constant Company LLC | 1G | US";
+        local as my_asn;
+        source address my_ipv6;
+        ...
+    }
 """
 
 import os
 import re
 import json
 import socket
-import base64
 import sqlite3
-import requests
-from config import UPSTREAM_PROTOCOLS, PEERINGDB_NET, PEERINGDB_API
+import subprocess
+import logging
+from collections import Counter
 from ipaddress import ip_address, IPv4Address
 
+import requests
+from config import UPSTREAM_PROTOCOLS, PEERINGDB_NET, PEERINGDB_API
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
 BIRDC_BINARY = "/usr/sbin/birdc"
-PEER_LIST = set()
-db = sqlite3.connect('/root/asn.db')
-db_cur = db.cursor()
-db_cur.execute('''CREATE TABLE IF NOT EXISTS asn
-               (asn text, country text, name text)''')
+
+def run_birdc_command(command):
+    """Run a restricted birdc command and return its output as text."""
+    try:
+        result = subprocess.run(
+            [BIRDC_BINARY, "-r", command],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=True
+        )
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        logging.error("Error running command '%s': %s", command, e.output)
+        return ""
+
+class ASNDatabase:
+    """Class to manage the ASN SQLite database."""
+    def __init__(self, db_path="/root/asn.db"):
+        self.conn = sqlite3.connect(db_path)
+        self.cur = self.conn.cursor()
+        self.cur.execute('''CREATE TABLE IF NOT EXISTS asn
+                            (asn TEXT, country TEXT, name TEXT)''')
+        self.conn.commit()
+
+    def fetch_all(self):
+        """Fetch all ASN records from the database."""
+        result = {}
+        for row in self.cur.execute("SELECT * FROM asn;"):
+            result[row[0]] = {"country": row[1], "name": row[2]}
+        return result
+
+    def insert_many(self, records):
+        """Insert multiple ASN records into the database."""
+        if records:
+            self.cur.executemany("INSERT INTO asn VALUES(?, ?, ?)", records)
+            self.conn.commit()
+
+    def close(self):
+        self.conn.close()
 
 def list_total_peers():
     """
-    Returns list of peer ASNs from exchange
+    Retrieve a set of peer ASNs from PeeringDB.
     """
-    headers = {
-        "Authorization": f"Api-Key {PEERINGDB_API}"
-    }
-    output = []
-
-    result = requests.get(f"https://www.peeringdb.com/api/net/{PEERINGDB_NET}", headers=headers).json()
-    for ixp in result['data'][0]['netixlan_set']:
-        ixp_result = requests.get(f"https://www.peeringdb.com/api/ixlan/{ixp['ix_id']}", headers=headers).json()
-        for ix_peer in ixp_result['data'][0]['net_set']:
-            output.append(str(ix_peer['asn']))
-
-    return set(output)
-
-
-def parse_protocol_output(output):
-    """
-    Parses the result of birdc show proto all {protocol}
-    """
-    result = {}
-    ret_address_version = ""
-    ret_asn_number = ""
-    ret_provider = ""
-    ret_ip_addr = ""
-
-    for ret_line in output.split("\n"):
-        if not ret_address_version:
-            ret_address = re.findall(r"Neighbor address:[\ ]+([0-9a-f\.\:]+)", ret_line.strip())
-            if ret_address:
-                ret_address_version = validate_ipaddress(ret_address[0])
-
-        if not ret_asn_number:
-            ret_asn_number = re.findall(r"Neighbor AS:[\ ]+([0-9]+)", ret_line.strip())
-            if ret_asn_number:
-                ret_asn_number = ret_asn_number[0]
-
-        if not ret_provider:
-            ret_provider = re.findall(r"Description:[\ ]+([\w\?\ \(\)\.\|\-\_]+)", ret_line.strip())
-            if ret_provider:
-                ret_provider = ret_provider[0].strip()
-
-        if not ret_ip_addr:
-            ret_ip_addr = re.findall(r"Source address:[\ ]+([0-9a-f\.\:]+)", ret_line.strip())
-            if ret_ip_addr:
-                ret_ip_addr = ret_ip_addr[0].strip()
-
-        if ret_asn_number and ret_address_version and ret_provider and ret_ip_addr:
-            break
-
-    if not ret_provider:
-        ret_provider = "? | ? | ?"
-
-    result = {
-        'asn': ret_asn_number,
-        'provider': ret_provider,
-        'version': ret_address_version,
-        'ip': ret_ip_addr,
-    }
-    return result
-
+    headers = {"Authorization": f"Api-Key {PEERINGDB_API}"}
+    output = set()
+    try:
+        response = requests.get(f"https://www.peeringdb.com/api/net/{PEERINGDB_NET}", headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        for ixp in data['data'][0].get('netixlan_set', []):
+            ixp_response = requests.get(f"https://www.peeringdb.com/api/ixlan/{ixp['ix_id']}", headers=headers)
+            ixp_response.raise_for_status()
+            ixp_data = ixp_response.json()
+            for net in ixp_data['data'][0].get('net_set', []):
+                output.add(str(net['asn']))
+    except requests.RequestException as e:
+        logging.error("Error fetching total peers: %s", e)
+    return output
 
 def validate_ipaddress(target):
     """
-    Check if the IP address is valid
-    Return version of IP address if valid
+    Validate the IP address and return its version ('v4' or 'v6').
+    Returns an empty string if invalid.
     """
     try:
         return "v4" if isinstance(ip_address(target), IPv4Address) else "v6"
     except ValueError:
         return ""
 
+def parse_protocol_output(output):
+    """
+    Parse the output from the command:
+      birdc show proto all {protocol}
+
+    Returns a dictionary with keys:
+      - 'asn': neighbor AS number,
+      - 'provider': provider description,
+      - 'version': IP version of the neighbor address,
+      - 'ip': source IP address.
+    """
+    ret_address_version = ""
+    ret_asn_number = ""
+    ret_provider = ""
+    ret_ip_addr = ""
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not ret_address_version:
+            match = re.search(r"Neighbor address:\s+([0-9a-f\.\:]+)", line)
+            if match:
+                ret_address_version = validate_ipaddress(match.group(1))
+        if not ret_asn_number:
+            match = re.search(r"Neighbor AS:\s+([0-9]+)", line)
+            if match:
+                ret_asn_number = match.group(1)
+        if not ret_provider:
+            match = re.search(r"Description:\s+([\w\?\ \(\)\.\|\-\_]+)", line)
+            if match:
+                ret_provider = match.group(1).strip()
+        if not ret_ip_addr:
+            match = re.search(r"Source address:\s+([0-9a-f\.\:]+)", line)
+            if match:
+                ret_ip_addr = match.group(1).strip()
+
+        if ret_asn_number and ret_address_version and ret_provider and ret_ip_addr:
+            break
+
+    if not ret_provider:
+        ret_provider = "? | ? | ?"
+    return {
+        'asn': ret_asn_number,
+        'provider': ret_provider,
+        'version': ret_address_version,
+        'ip': ret_ip_addr,
+    }
 
 def list_exchanges():
     """
-    List available protocols from bird
-    Returns dict of protocols and its descriptions
+    List available exchanges from Bird by parsing protocol descriptions.
+    Returns a dictionary mapping exchange names to their details.
     """
-    global UPSTREAM_PROTOCOLS
-    global BIRDC_BINARY
     result = {}
     exchanges = []
 
-    # fetch exchanges from show proto
-    ret = os.popen(f"{BIRDC_BINARY} -r 'show proto' 2>&1").read()
-    ret_parsed = [[j for j in i.split(" ") if j] for i in ret.split("\n") if i]
-    for protocol in ret_parsed:
-        if protocol[1] != "BGP":
+    # Fetch protocol list using "birdc show proto"
+    proto_output = run_birdc_command("show proto")
+    for line in proto_output.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or parts[1] != "BGP":
             continue
-        if protocol[0] in UPSTREAM_PROTOCOLS:
+        if parts[0] in UPSTREAM_PROTOCOLS:
             continue
-        exchanges.append(protocol[0])
+        exchanges.append(parts[0])
 
-    # parse all info from each exchange
+    # For each exchange, parse detailed information
     for exchange in exchanges:
-        ret = os.popen(f"{BIRDC_BINARY} -r 'show proto all {exchange}' 2>&1").read()
-        proto_output = parse_protocol_output(ret)
+        output = run_birdc_command(f"show proto all {exchange}")
+        proto_data = parse_protocol_output(output)
+        if not proto_data:
+            continue
 
-        if proto_output:
-            ret_address_version = proto_output['version']
-            ret_asn = proto_output['asn']
+        provider_parts = [p.strip() for p in proto_data['provider'].split("|")]
 
-            ret_provider = proto_output['provider'].split("|")
-            ret_ip_addr = proto_output['ip']
-            if result.get(exchange):
+        # skip bgp.tools / etc.
+        if len(provider_parts) > 1:
+            if provider_parts[1].strip() == "?":
                 continue
 
-            ret_speed = "1G"
-            if len(ret_provider) > 1:
-                if ret_provider[1].strip() == "?":
-                    continue
-                ret_speed = ret_provider[1].strip()
+        ret_speed = provider_parts[1] if len(provider_parts) > 1 and provider_parts[1] != "?" else "1G"
+        ret_country = provider_parts[2] if len(provider_parts) > 2 else "us"
 
-            result[exchange] = {
-                'asn': ret_asn,
-                'ip': ret_ip_addr,
-                'version': ret_address_version,
-                'provider': ret_provider[0].strip(),
-                'speed': ret_speed,
-                'country': ret_provider[2].strip() if len(ret_provider) > 1 else "us",
-            }
 
+        result[exchange] = {
+            'asn': proto_data['asn'],
+            'ip': proto_data['ip'],
+            'version': proto_data['version'],
+            'provider': provider_parts[0] if provider_parts else "",
+            'speed': ret_speed,
+            'country': ret_country,
+        }
     return result
 
 def list_peers(protocol):
-    """ (list) -> list
-    List available protocols from bird
-    Returns list of protocols
     """
-    global BIRDC_BINARY
+    List peers for a given protocol from Bird.
+
+    Returns a dictionary with keys 'v4' and 'v6', mapping ASN to peer info.
+    """
     result = {'v4': {}, 'v6': {}}
 
-    for blocked_char in ["'", "\"", "$", "`", "|", "\\", ";", ">", "<", "{", "}"]:
-        if blocked_char in protocol:
+    # Reject potentially unsafe protocol strings
+    for ch in ["'", "\"", "$", "`", "|", "\\", ";", ">", "<", "{", "}"]:
+        if ch in protocol:
             return result
 
-    ret = os.popen(f"{BIRDC_BINARY} -r 'show route primary protocol {protocol}'").read().split("\n")
-    for i in range(3, len(ret), 2):
-        row = [q for q in ret[i].split(" ") if q]
+    output = run_birdc_command(f"show route primary protocol {protocol}")
+    lines = output.splitlines()
+
+    for i in range(3, len(lines)):
+        row = [q for q in lines[i].split() if q]
         if not row:
+            continue
+
+        if len(row) < 2:
             continue
 
         row_prefix = row[0]
         row_status = row[1]
-        row_asn = row[-1]
-
-        row_asn = re.findall(r"\[AS([0-9]+)[i\*\?]\]", row_asn)
-        if not row_asn:
+        row_asn_field = row[-1]
+        asn_match = re.search(r"\[AS([0-9]+)[i\*\?]\]", row_asn_field)
+        if not asn_match:
             continue
 
-        row_asn = row_asn[0]
-        if row_asn not in PEER_LIST:
+        row_asn = asn_match.group(1)
+        # if row_asn not in PEER_LIST:
+        #     continue
+
+        if row_status == "unreachable": # or row_status != "unicast":
             continue
 
-
-        # Check if the imported network is reachable
-        if row_status == "unreachable":
-            continue
-
-        if row_status != "unicast":
-            # print(f"[*] Debug plz: {row}")
-            continue
-
-        # Check if the ASN is valid
-        try:
-            row_address_version = validate_ipaddress(row_prefix.split("/")[0])
-        except IndexError:
-            continue
-
-        if result[row_address_version].get(row_asn):
+        ip_part = row_prefix.split("/")[0]
+        row_address_version = validate_ipaddress(ip_part)
+        if row_asn in result.get(row_address_version, {}):
             continue
 
         result[row_address_version][row_asn] = {
@@ -217,109 +245,80 @@ def list_peers(protocol):
             'name': '',
             'country': '',
         }
-
     return result
-
 
 def list_upstream():
     """
-    List available protocols from bird, parse neighbor NS from upstream protocol info
-    Returns list of ASNs
+    List upstream peers from Bird.
+
+    Returns a dictionary with keys 'v4' and 'v6' mapping ASN to upstream peer info.
     """
-    global UPSTREAM_PROTOCOLS
-    global BIRDC_BINARY
-
     result = {'v4': {}, 'v6': {}}
-
-    # get available upstreams
     available_upstreams = []
-    ret = os.popen("id 2>&1").read()
-    ret += os.popen(f"{BIRDC_BINARY} -r 'show proto' 2>&1").read()
-    f = open("/srv/ret", "w")
-    f.write(ret)
-    f.close()
 
-    ret = os.popen(f"{BIRDC_BINARY} -r 'show proto' | tail -n +4").read()
-    ret_parsed = [[j for j in i.split(" ") if j] for i in ret.split("\n") if i]
-    for protocol in ret_parsed:
-        if protocol[1] != "BGP":
+    proto_output = run_birdc_command("show proto")
+    for line in proto_output.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or parts[1] != "BGP":
             continue
-        if protocol[0] not in UPSTREAM_PROTOCOLS:
+        if parts[0] not in UPSTREAM_PROTOCOLS:
             continue
-        available_upstreams.append(protocol[0])
+        available_upstreams.append(parts[0])
 
-    # parse neighbor ns
     for upstream in available_upstreams:
-        ret = os.popen(f"{BIRDC_BINARY} -r 'show proto all {upstream}'").read()
-        proto_output = parse_protocol_output(ret)
-
-        if proto_output:
-            ret_address_version = proto_output['version']
-            ret_asn = proto_output['asn']
-            ret_provider = proto_output['provider'].split("|")
-            if result[ret_address_version].get(ret_asn):
-                continue
-
-            result[ret_address_version][ret_asn] = {
-                'type': 'upstream',
-                'name': '',
-                'provider': ret_provider[0].strip(),
-                'country': ret_provider[2].strip() if len(ret_provider) > 1 else "us",
-                'speed': ret_provider[1].strip() if len(ret_provider) > 1 else "1G",
-            }
+        output = run_birdc_command(f"show proto all {upstream}")
+        proto_data = parse_protocol_output(output)
+        if not proto_data:
             continue
 
+        provider_parts = [p.strip() for p in proto_data['provider'].split("|")]
+        result[proto_data['version']][proto_data['asn']] = {
+            'type': 'upstream',
+            'name': '',
+            'provider': provider_parts[0] if provider_parts else "",
+            'country': provider_parts[2] if len(provider_parts) > 2 else "us",
+            'speed': provider_parts[1] if len(provider_parts) > 1 else "1G",
+        }
     return result
 
 def list_downstream():
     """
-    List available exchanges from bird, get list of exported info
-    Returns list of ASNs
+    List downstream peers from exchanges.
+
+    Returns a dictionary with keys 'v4' and 'v6' mapping ASN to peer info,
+    including the exchange from which they were learned.
     """
-    server_list = list_exchanges()
+    exchanges = list_exchanges()
     server_peers = {'v4': {}, 'v6': {}}
 
-    for server in server_list:
-        peers = list_peers(server)
-        for version in peers.keys():
-            for asn, asn_info in peers[version].items():
-                server_peers[version][asn] = asn_info
-                server_peers[version][asn]['exchange'] = server
-
+    for exchange, details in exchanges.items():
+        peers = list_peers(exchange)
+        for version, asn_dict in peers.items():
+            for asn, info in asn_dict.items():
+                info['exchange'] = exchange
+                server_peers[version][asn] = info
     return server_peers
 
-def fetch_asn_info(asn_list):
-    """ (list) -> dict
+def fetch_asn_info(asn_list, db_manager):
+    """
+    Retrieve ASN information from bgp.tools and cache results in a local SQLite DB.
 
-    Interact with BGP.tools to retrieve ASN Information
-    Returns dict of dict ASN
+    Returns a dictionary mapping ASN to its details.
     """
     whois_server = ("bgp.tools", 43)
-    result = {}
-    result_db = []
+    result = db_manager.fetch_all()
+    missing_asns = [asn for asn in asn_list if asn not in result]
 
-    # fetch db first!
-    for row in db_cur.execute('SELECT * FROM asn;'):
-        result[row[0]] = {
-            "country": row[1],
-            "name": row[2],
-        }
-
-    # asn_list is all parted from asn
-    curr_asn_list = []
-    result_keys = result.keys()
-    for i in asn_list:
-        if i not in result_keys:
-            curr_asn_list.append(i)
-
-    if not curr_asn_list:
+    if not missing_asns:
         return result
 
-    payload = ("begin\nverbose\nas" + ("\nas".join(curr_asn_list)) + "\nend\n").encode()
-    # connect to server and fetch ASN information
+    payload = ("begin\nverbose\n" +
+               "\n".join(f"as{asn}" for asn in missing_asns) +
+               "\nend\n").encode()
     recv_data = b""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.connect(whois_server)
+
+    # connect to server and fetch ASN information
+    with socket.create_connection(whois_server) as sock:
         sock.sendall(payload)
         while True:
             data = sock.recv(1024)
@@ -328,59 +327,61 @@ def fetch_asn_info(asn_list):
             recv_data += data
 
     # parse data based on info from bgp.tools
-    for asn_info in recv_data.split(b"\n"):
-        if not asn_info:
+    records_to_insert = []
+    for line in recv_data.split(b"\n"):
+        if not line:
             continue
-        asn_info_parsed = [i.strip() for i in asn_info.split(b"|")]
+        parts = [p.strip() for p in line.split(b"|")]
+        if parts:
+            asn_key = parts[0].decode()
+            country = parts[3].decode().lower() if len(parts) > 3 else ""
+            name = parts[-1].decode() if parts else ""
+            result[asn_key] = {"country": country, "name": name}
+            records_to_insert.append((asn_key, country, name))
 
-        if asn_info_parsed:
-            result[asn_info_parsed[0].decode()] = {
-                "country":  asn_info_parsed[3].decode().lower(),
-                "name": asn_info_parsed[-1].decode()
-            }
-            result_db.append((asn_info_parsed[0].decode(), asn_info_parsed[3].decode().lower(), asn_info_parsed[-1].decode()))
-
-    db_cur.executemany("INSERT INTO asn VALUES(?, ?, ?)", result_db)
-    db.commit()
+    db_manager.insert_many(records_to_insert)
     return result
 
 def main():
     """
-    main function to render json output of the connectivity
+    Main function to gather connectivity information and output JSON.
     """
-    result = {
-        'upstreams': list_upstream(),
-        'downstreams': list_downstream(),
-    }
+    db_manager = ASNDatabase()
+    try:
+        connectivity = {
+            'upstreams': list_upstream(),
+            'downstreams': list_downstream(),
+        }
 
-    # fetch ASN information
-    asn_list = []
-    for version in ['v4', 'v6']:
-        for asn_type in result:
-            asn_list.extend(list(result[asn_type][version].keys()))
-            asn_list.extend(list(result[asn_type][version].keys()))
-    asn_list_info = fetch_asn_info(asn_list)
+        # Aggregate ASN list from both upstreams and downstreams
+        asn_set = set()
+        for peer_type in ['upstreams', 'downstreams']:
+            for version in connectivity.get(peer_type, {}):
+                asn_set.update(connectivity[peer_type][version].keys())
 
-    # add country and name based on fetched asn info
-    for asn in asn_list_info:
-        for version in ['v4', 'v6']:
-            for asn_type in result:
-                if result[asn_type][version].get(asn):
-                    if not result[asn_type][version][asn]['country']:
-                        result[asn_type][version][asn]['country'] = asn_list_info[asn]['country']
-                    if not result[asn_type][version][asn]['name']:
-                        result[asn_type][version][asn]['name'] = asn_list_info[asn]['name']
+        asn_info = fetch_asn_info(list(asn_set), db_manager)
 
-    # add exchange at last
-    exchanges = list_exchanges()
-    result['exchanges'] = exchanges
+        # Merge ASN info into connectivity data
+        for peer_type in ['upstreams', 'downstreams']:
+            for version, peers in connectivity[peer_type].items():
+                for asn, info in peers.items():
+                    if asn in asn_info:
+                        if not info.get('country'):
+                            info['country'] = asn_info[asn]['country']
+                        if not info.get('name'):
+                            info['name'] = asn_info[asn]['name']
 
-    return json.dumps(result)
+        connectivity['exchanges'] = list_exchanges()
+        return json.dumps(connectivity)
+    finally:
+        db_manager.close()
 
 if __name__ == "__main__":
-    PEER_LIST = list_total_peers()
-    result = main()
-    fp_connect = open("/var/www/connectivity.json", "w")
-    fp_connect.write(result)
-    fp_connect.close()
-    print(result)
+    # Fetch the peer list from PeeringDB before processing
+    # PEER_LIST = list_total_peers()
+    result_json = main()
+    output_path = "/var/www/connectivity.json"
+    with open(output_path, "w") as fp:
+        fp.write(result_json)
+    logging.info("Connectivity data written to %s", output_path)
+    print(result_json)
