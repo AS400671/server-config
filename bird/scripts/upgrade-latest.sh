@@ -1,11 +1,11 @@
 #!/bin/sh
 set -e
 
-# AS400671 uses the latest version of Bird 3.0.1
+# AS400671 uses the latest version of Bird 3
 # ... the latest version from the official debian apt repo is pretty old
 # ... and there are many updates on the latest version containing RPKI stability fixes and minor bugfixes
 
-BIRD_VERSION="v3.0.1"
+BIRD_VERSION="v3.1.0"
 
 # backup first!
 mkdir -p ./backup/bird
@@ -15,11 +15,9 @@ cp -rp /etc/bird/envvars ./backup/envvars # Not needed probably
 cp -rp /lib/systemd/system/bird.service ./backup/
 cp -rp /usr/lib/bird/prepare-environment ./backup
 
-echo "Downloading..."
-wget https://gitlab.nic.cz/labs/bird/-/archive/${BIRD_VERSION}/bird-${BIRD_VERSION}.tar.gz
-
-echo "Unpacking..."
-tar xvf bird-${BIRD_VERSION}.tar.gz
+echo "Cloning..."
+rm -rf bird-$BIRD_VERSION
+git clone https://gitlab.nic.cz/labs/bird/ -b $BIRD_VERSION --depth 1 bird-$BIRD_VERSION
 
 echo "Installing dependencies..."
 apt -y install gcc g++ automake make m4 binutils flex bison libncurses5-dev libncursesw5-dev libreadline-dev libssh-dev libssh-gcrypt-4
