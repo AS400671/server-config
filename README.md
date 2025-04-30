@@ -6,10 +6,20 @@ Decided to open-source it for everyone's sake..
 
 Please note that some constants and variables were redacted for security reasons.
 
+## Breaking Changes since May 1, 2025
+
+Since v3.1.0, it is recommended to add `authentication` when passwords are added to the connection options.
+
+However, this could potentially cause configuration errors on older versions of BIRD daemon.
+
+Please remove accordingly when the error appears on your machine.
+
+[Reference Commit](https://github.com/CZ-NIC/bird/commit/f5d9f36276bfbf5e6a2d7facbd829b2d45cfe6bc#diff-b2e11157926a32e724a539c3c63cdc945907a274d273a28aaa5b45ad73d6eee2R2946)
+
 ## Technologies used for PoPs
 
-* Bird
-    * 3.x: [Manually compiled](./bird/scripts/upgrade-latest.sh)
+* BIRD
+    * 3.1.0 and higher: [Manually compiled](./bird/scripts/upgrade-latest.sh)
     * RPKI (RFC6811, RFC8893) check is implemented with `stayrtr` and `rpki-client`
     * BGP Large Communities (RFC8092) implemented (Check https://stypr.network/#community)
     * Configurations of interconnects with upstream, peers, etc.
@@ -30,7 +40,7 @@ Please note that some constants and variables were redacted for security reasons
 
 ### RPKI
 
-RPKI consumes a lot of memory as RPKI data is directly cached in the memory to sync data between the RPKI client and the bird daemon.
+RPKI consumes a lot of memory as RPKI data is directly cached in the memory to sync data between the RPKI client and the BIRD daemon.
 
 Make sure to increase your (swap) memory in case your server runs on a low memory. `stayrtr` or `rpki-client` may randomly crash when the free memory space is insufficient.
 
@@ -61,7 +71,7 @@ Check packets and see what went wrong to troubleshoot. Wireshark is actually ver
 
 ### GRETAP Tunneling
 
-If you're using GRETAP tunneling, make sure that bird resets the GRETAP connection upon starting (and restarting) bird daemon.
+If you're using GRETAP tunneling, make sure that BIRD resets the GRETAP connection upon starting (and restarting) BIRD daemon.
 
 You can do this by editing the `/usr/lib/bird/prepare-environment` as follows
 
