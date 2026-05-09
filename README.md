@@ -26,8 +26,8 @@ Please remove accordingly when the error appears on your machine.
         * Exchanges are mostly connected over GRETAP for stability
 
 * API
-    * PHP 8.x
-        * For sharing information with the [Network Dashboard](https://stypr.network/)
+    * PHP 8.4+
+        * For looking glass and traffic info to show on the [Network Dashboard](https://stypr.network/)
     * Caddy (Apache and other webservers can be used as an alternative)
     * Python
         * For cronjobs; used for crawling interconnected IXPs, peers, etc.
