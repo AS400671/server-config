@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 /*
-    AS400671 PoP API
+    AS400671 PoP Looking Glass API
 
     Installation
     * php8.4+ with php-sqlite
-    * bird2
+    * bird3
     * vnstat
     * add www-data to bird group
 
@@ -23,6 +23,7 @@ declare(strict_types=1);
     Please set before use
     * INTERFACE_NAME
     * NETWORK4_ID / NETWORK6_ID
+    * BIRD_MASTER6 / BIRD_MASTER4
 */
 
 /* --- Setup --- */
@@ -30,9 +31,11 @@ declare(strict_types=1);
 define("INTERFACE_NAME",  "enp1s0"); // Use `ip link property add dev enp1s0 altname eth0`
 define("NETWORK4_ID",     "wg0"); // Define network ethernets: if you do not use IPv4, keep it as eth0
 define("NETWORK6_ID",     "wg0");
+define("BIRD_MASTER4",    "static5"); // Usually static1, check via `birdc show proto`
+define("BIRD_MASTER6",    "static4"); // Usually static2, check via `birdc show proto`
 define("SOURCE_IPV4",     get_interface_ip(NETWORK4_ID));
 define("SOURCE_IPV6",     get_interface_ip(NETWORK6_ID, true));
-define("CURRENT_VERSION", "v1.4-260509");
+define("CURRENT_VERSION", "v1.4.1-260527");
 define("API_KEY",         null);
 define("ENABLE_CACHE",    true);
 define("CORS_HOST",       "https://stypr.network"); // Change to dashboard domain
@@ -186,14 +189,24 @@ function validate_ip(string $ip, bool $with_prefix = false): bool
     if ($ip === "") {
         return false;
     }
+
     if ($with_prefix) {
         [$addr, $prefix] = explode("/", $ip, 2) + ["", ""];
-        return $addr !== ""
-            && is_numeric($prefix)
-            && filter_var($addr, FILTER_VALIDATE_IP) !== false
-            && (int) $prefix >= 0
-            && (int) $prefix <= 128;
+        if ($addr === "" || !is_numeric($prefix)) {
+            return false;
+        }
+
+        $is_v6 = filter_var($addr, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+        $is_v4 = filter_var($addr, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false;
+
+        if (!$is_v4 && !$is_v6) {
+            return false;
+        }
+
+        $max = $is_v6 ? 128 : 32;
+        return (int) $prefix >= 0 && (int) $prefix <= $max;
     }
+
     return filter_var($ip, FILTER_VALIDATE_IP) !== false;
 }
 
@@ -202,14 +215,26 @@ function ip_version(string $ip): string
     return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false ? "6" : "";
 }
 
+function is_public_ip(string $ip): bool
+{
+    return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+}
+
 function resolve_target(string $argument): array|false
 {
     if (validate_ip($argument)) {
-        return [ip_version($argument), sanitize_ip($argument)];
+        $ip = sanitize_ip($argument);
+        if (!is_public_ip($ip)) {
+            return false;
+        }
+        return [ip_version($ip), $ip];
     }
     if (validate_domain($argument)) {
         $resolved = dns_lookup($argument, try_a: true);
-        return $resolved !== false ? [ip_version($resolved), sanitize_domain($argument)] : false;
+        if ($resolved === false || !is_public_ip($resolved)) {
+            return false;
+        }
+        return [ip_version($resolved), sanitize_domain($argument)];
     }
     return false;
 }
@@ -314,6 +339,11 @@ function handle_bgp_route_for(SQLite3 $db, string $method, string $argument): ar
         return err("Invalid target");
     }
 
+    $addr = explode("/", $target, 2)[0];
+    if (!is_public_ip($addr)) {
+        return err("Private or reserved addresses not allowed");
+    }
+
     $bin_path = binary_path("birdc");
     if ($bin_path === "") {
         return err("daemon not available");
@@ -369,7 +399,7 @@ $result = match($method) {
     "traffic"          => handle_traffic($cache_db, $method, $argument),
     "ping"             => handle_probe("ping",       $cache_db, $method, $argument),
     "traceroute"       => handle_probe("traceroute", $cache_db, $method, $argument),
-    "bgp_announcement" => handle_birdc($cache_db, $method, $argument, "show static static1", "show static static2"),
+    "bgp_announcement" => handle_birdc($cache_db, $method, $argument, "show static " . BIRD_MASTER4, "show static " . BIRD_MASTER6),
     "bgp_status"       => handle_birdc($cache_db, $method, $argument, "show proto all"),
     "bgp_route_for"    => handle_bgp_route_for($cache_db, $method, $argument),
     "connectivity"     => handle_connectivity($cache_db),
