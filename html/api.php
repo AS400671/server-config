@@ -36,7 +36,6 @@ define("BIRD_MASTER6",    "static4"); // Usually static2, check via `birdc show 
 define("SOURCE_IPV4",     get_interface_ip(NETWORK4_ID));
 define("SOURCE_IPV6",     get_interface_ip(NETWORK6_ID, true));
 define("CURRENT_VERSION", "v1.4.1-260527");
-define("API_KEY",         null);
 define("ENABLE_CACHE",    true);
 define("CORS_HOST",       "https://stypr.network"); // Change to dashboard domain
 
@@ -52,15 +51,11 @@ header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
 header("Access-Control-Allow-Origin: " . CORS_HOST);
 
 
-/* --- API auth --- */
+/* --- Return Options --- */
 
 if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") {
     http_response_code(204);
     exit;
-}
-
-if (API_KEY !== null && API_KEY !== (string) ($_GET["api_key"] ?? "")) {
-    abort(["result" => "Invalid API key", "status" => "error"]);
 }
 
 /* --- Utilities --- */

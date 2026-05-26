@@ -22,6 +22,7 @@ Please remove accordingly when the error appears on your machine.
     * 3.3.0 and higher: [Manually compiled](./bird/scripts/upgrade-latest.sh)
     * RPKI (RFC6811, RFC8893) check is implemented with `rpki-client`
     * BGP Large Communities (RFC8092) implemented (Check https://stypr.network/#community)
+    * Route Leak Prevention and Detection (RFC9234) added for [bird](https://bird.nic.cz/doc/bird-3.3.0.html#bgp-local-role)
     * Configurations of interconnects with upstream, peers, etc.
         * Exchanges are mostly connected over GRETAP for stability
 
