@@ -57,15 +57,9 @@ You might want to edit `/etc/default/rpki-client` and `systemctl edit rpki-clien
 
 ### IRR Filtering
 
-RPKI has been enabled for the setup, but there are also plans to use bgpq4 (https://github.com/bgp/bgpq4) to filter direct peers and customers. 
+RPKI has been enabled for the setup and bgpq4 (https://github.com/bgp/bgpq4) are enabled for direct peers and customers. 
 
-IRR filters hasn't been implemented yet since customers or peers are considered as a fully trusted ones, but there is a plan to add automated checks on AS-SETs.
-
-Commands to run `bgpq4` would be the following (as suggested by AS50058), but it is always recommended to grep and handpick some options from the manual.
-
-```sh
-bgpq4 -S $source -h $server -l $name -A4s $asset
-```
+You might want to check `bird/config/irr/renew.sh`, `bird/config/bird.conf` and `bird/config/bgp/cloudflare.conf` to see how this works.
 
 ### Debugging Traffics
 
