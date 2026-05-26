@@ -5,7 +5,7 @@ set -e
 # ... the latest version from the official debian apt repo is pretty old
 # ... and there are many updates on the latest version containing RPKI stability fixes and minor bugfixes
 
-BIRD_VERSION="v3.1.0"
+BIRD_VERSION="v3.3.0"
 
 # backup first!
 mkdir -p ./backup/bird

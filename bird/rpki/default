@@ -1,0 +1,2 @@
+# cat /etc/default/rpki-client
+OPTIONS="-B /var/lib/rpki-client"

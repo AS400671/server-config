@@ -19,8 +19,8 @@ Please remove accordingly when the error appears on your machine.
 ## Technologies used for PoPs
 
 * BIRD
-    * 3.1.0 and higher: [Manually compiled](./bird/scripts/upgrade-latest.sh)
-    * RPKI (RFC6811, RFC8893) check is implemented with `stayrtr` and `rpki-client`
+    * 3.3.0 and higher: [Manually compiled](./bird/scripts/upgrade-latest.sh)
+    * RPKI (RFC6811, RFC8893) check is implemented with `rpki-client`
     * BGP Large Communities (RFC8092) implemented (Check https://stypr.network/#community)
     * Configurations of interconnects with upstream, peers, etc.
         * Exchanges are mostly connected over GRETAP for stability
@@ -44,6 +44,15 @@ RPKI consumes a lot of memory as RPKI data is directly cached in the memory to s
 
 Make sure to increase your (swap) memory in case your server runs on a low memory. `stayrtr` or `rpki-client` may randomly crash when the free memory space is insufficient.
 
+**Updates as of May 27, 2026**
+
+Running `rpki-client` alone does work perfectly without having `stayrtr` dependencies. It also leaves lesser memory footprints.
+
+You may still want to use `stayrtr` if you're not sure of what you're doing.
+
+Some files were left on `bird/rpki/` as a reference: these files let `rpki-client` pass all information directly to bird.
+
+You might want to edit `/etc/default/rpki-client` and `systemctl edit rpki-client.service` to make things work smoothly.
 
 ### IRR Filtering
 
