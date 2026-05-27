@@ -51,7 +51,7 @@ header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
 header("Access-Control-Allow-Origin: " . CORS_HOST);
 
 
-/* --- Return Options --- */
+/* --- Return OPTIONS --- */
 
 if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") {
     http_response_code(204);
@@ -87,24 +87,20 @@ function binary_path(string $name): string
 
 /* --- Cache --- */
 
-function check_cache(SQLite3 $db, string $method, string $argument): array|false
+function is_rate_limited(SQLite3 $db): bool
 {
     $stm = $db->prepare("SELECT COUNT(*) AS n FROM cache WHERE timestamp > :ts");
     $stm->bindValue(":ts", time() - 60, SQLITE3_INTEGER);
-    $count = (int) $stm->execute()->fetchArray(SQLITE3_ASSOC)["n"];
+    return (int) $stm->execute()->fetchArray(SQLITE3_ASSOC)["n"] >= 120;
+}
 
-    if ($count >= 120) {
-        return err("Ratelimited!");
-    }
-
-    $stm = $db->prepare(
-        "SELECT result FROM cache WHERE method = :method AND argument = :argument AND timestamp > :ts"
-    );
+function check_cache(SQLite3 $db, string $method, string $argument): array|false
+{
+    $stm = $db->prepare("SELECT result FROM cache WHERE method = :method AND argument = :argument AND timestamp > :ts");
     $stm->bindValue(":method",   $method,     SQLITE3_TEXT);
     $stm->bindValue(":argument", $argument,   SQLITE3_TEXT);
     $stm->bindValue(":ts",       time() - 60, SQLITE3_INTEGER);
     $row = $stm->execute()->fetchArray(SQLITE3_ASSOC);
-
     return $row !== false ? ["result" => $row["result"], "status" => "success"] : false;
 }
 
@@ -124,19 +120,36 @@ function write_cache(SQLite3 $db, string $method, string $argument, string $resu
 
 function get_interface_ip(string $interface = "eth0", bool $ipv6 = false): string
 {
-    $bin = binary_path("ifconfig");
+    $bin = binary_path("ip");
     if ($bin === "") {
         return "";
     }
-    $grep = $ipv6 ? "inet6 " : "inet ";
+    $family = $ipv6 ? "-6" : "-4";
     $cmd = sprintf(
-        "%s %s | grep %s | cut -d' ' -f10 | awk '{ print $1 }' | head -1",
+        "%s %s -j addr show dev %s 2>/dev/null",
         escapeshellcmd($bin),
-        escapeshellarg($interface),
-        escapeshellarg($grep)
+        $family,
+        escapeshellarg($interface)
     );
-    $output = trim((string) shell_exec($cmd));
-    return filter_var($output, FILTER_VALIDATE_IP) !== false ? $output : "";
+    $raw = (string) shell_exec($cmd);
+    if (!json_validate($raw)) {
+        return "";
+    }
+    $data = json_decode($raw, true);
+    if (!is_array($data) || empty($data[0]["addr_info"])) {
+        return "";
+    }
+
+    foreach ($data[0]["addr_info"] as $addr) {
+        if (($addr["scope"] ?? "") !== "global") {
+            continue;
+        }
+        $ip = $addr["local"] ?? "";
+        if (filter_var($ip, FILTER_VALIDATE_IP) !== false) {
+            return $ip;
+        }
+    }
+    return "";
 }
 
 function dns_lookup(string $host, bool $try_a = false): string|false
@@ -222,14 +235,22 @@ function resolve_target(string $argument): array|false
         if (!is_public_ip($ip)) {
             return false;
         }
-        return [ip_version($ip), $ip];
+        return [
+            "version" => ip_version($ip),
+            "ip" => $ip,
+            "domain" => null
+        ];
     }
     if (validate_domain($argument)) {
         $resolved = dns_lookup($argument, try_a: true);
         if ($resolved === false || !is_public_ip($resolved)) {
             return false;
         }
-        return [ip_version($resolved), sanitize_domain($argument)];
+        return [
+            "version" => ip_version($resolved),
+            "ip" => $resolved,
+            "domain" => sanitize_domain($argument)
+        ];
     }
     return false;
 }
@@ -264,14 +285,10 @@ function handle_traffic(SQLite3 $db, string $method, string $argument): array
     return $result;
 }
 
-function handle_probe(string $tool, SQLite3 $db, string $method, string $argument): array
+function handle_probe(string $tool, SQLite3 $db, string $method, array $target_data): array
 {
-    $target_data = resolve_target($argument);
-    if ($target_data === false) {
-        return err("invalid target");
-    }
+    ["version" => $ver, "ip" => $target] = $target_data;
 
-    [$ver, $target] = $target_data;
     $ip_source = $ver === "6" ? SOURCE_IPV6 : SOURCE_IPV4;
     if ($ip_source === "") {
         return err("source interface unavailable");
@@ -299,7 +316,9 @@ function handle_probe(string $tool, SQLite3 $db, string $method, string $argumen
     };
 
     $result = ok(trim((string) shell_exec($command)));
-    write_cache($db, $method, $argument, $result["result"]);
+    $result["target"] = $target;
+    $result["domain"] = $target_data["domain"];
+    write_cache($db, $method, $target, $result["result"]);
     return $result;
 }
 
@@ -379,21 +398,63 @@ if ((int) ($row["n"] ?? 0) >= 65535) {
     $cache_db->exec("DELETE FROM cache");
 }
 
+/* --- Cache + Rebinding check --- */
+
 $method   = (string) ($_GET["method"] ?? "");
 $argument = (string) ($_GET["target"] ?? "");
 
+if (ENABLE_CACHE && is_rate_limited($cache_db)) {
+    abort([
+        ...err("Ratelimited!"),
+        "cached"  => false,
+        "version" => CURRENT_VERSION,
+    ]);
+}
+
+$target_data = null;
+$cache_key   = $argument;
+if ($method === "ping" || $method === "traceroute") {
+    if (ENABLE_CACHE && check_cache($cache_db, "{$method}:invalid", $argument) !== false) {
+        abort([
+            ...err("invalid target"),
+            "cached"  => true,
+            "version" => CURRENT_VERSION,
+        ]);
+    }
+
+    $target_data = resolve_target($argument);
+    if ($target_data === false) {
+        write_cache($cache_db, "{$method}:invalid", $argument, "1");
+        abort([
+            ...err("invalid target"),
+            "cached"  => false,
+            "version" => CURRENT_VERSION,
+        ]);
+    }
+    $cache_key = $target_data["ip"];
+}
+
 if (ENABLE_CACHE) {
-    $cached = check_cache($cache_db, $method, $argument);
+    $cached = check_cache($cache_db, $method, $cache_key);
     if ($cached !== false) {
-        abort([...$cached, "version" => CURRENT_VERSION, "cached" => true]);
+        $payload = [
+            ...$cached,
+            "version" => CURRENT_VERSION,
+            "cached"  => true,
+        ];
+        if ($target_data !== null) {
+            $payload["target"] = $target_data["ip"];
+            $payload["domain"] = $target_data["domain"];
+        }
+        abort($payload);
     }
 }
 
 $result = match($method) {
     "ip"               => handle_ip(),
     "traffic"          => handle_traffic($cache_db, $method, $argument),
-    "ping"             => handle_probe("ping",       $cache_db, $method, $argument),
-    "traceroute"       => handle_probe("traceroute", $cache_db, $method, $argument),
+    "ping"             => handle_probe("ping",       $cache_db, $method, $target_data),
+    "traceroute"       => handle_probe("traceroute", $cache_db, $method, $target_data),
     "bgp_announcement" => handle_birdc($cache_db, $method, $argument, "show static " . BIRD_MASTER4, "show static " . BIRD_MASTER6),
     "bgp_status"       => handle_birdc($cache_db, $method, $argument, "show proto all"),
     "bgp_route_for"    => handle_bgp_route_for($cache_db, $method, $argument),
@@ -401,4 +462,8 @@ $result = match($method) {
     default            => err("Unknown method"),
 };
 
-abort([...$result, "cached" => false, "version" => CURRENT_VERSION]);
+abort([
+    ...$result,
+    "cached" => false,
+    "version" => CURRENT_VERSION
+]);
