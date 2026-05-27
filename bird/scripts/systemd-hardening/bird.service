@@ -1,0 +1,45 @@
+[Unit]
+Description=BIRD Internet Routing Daemon
+After=network-online.target
+Wants=network-online.target
+# After=network.target
+
+[Service]
+Group=bird
+EnvironmentFile=/etc/bird/envvars
+ExecStartPre=/bin/sh -x /usr/lib/bird/prepare-environment
+ExecStartPre=/usr/sbin/bird -p
+ExecReload=/usr/sbin/birdc configure
+ExecStart=/usr/sbin/bird -f -u $BIRD_RUN_USER -g $BIRD_RUN_GROUP $BIRD_ARGS
+Restart=on-failure
+RestartSec=5
+
+RuntimeDirectory=bird
+RuntimeDirectoryMode=0775
+RuntimeDirectoryPreserve=yes
+
+NoNewPrivileges=true
+
+# Filesystem hardening
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+# Only allow read-write on certain paths
+ReadWritePaths=/run/bird /var/log
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+# Allow sockets
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+
+# Memory Hardening
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+
