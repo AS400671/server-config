@@ -35,12 +35,12 @@ apt install -y \
 
 # Download and verify checksum
 echo "Downloading bird ${BIRD_VERSION}..."
-mkdir -p "{$WORKDIR}"
+mkdir -p "$WORKDIR"
 rm -rf "${BUILD_DIR}"
 git clone "$BIRD_REPO" -b "$BIRD_VERSION" --depth 1 "$BUILD_DIR"
 
 echo "Verifying..."
-DOWNLOAD_COMMIT="$(git -C bird-$BIRD_VERSION rev-parse HEAD)"
+DOWNLOAD_COMMIT="$(git -C "$BUILD_DIR" rev-parse HEAD)"
 if [ "$DOWNLOAD_COMMIT" != "$BIRD_COMMIT" ]; then
     echo "ERROR: BIRD $BIRD_VERSION commit mismatch!"
     echo "Downloaded: $DOWNLOAD_COMMIT"
