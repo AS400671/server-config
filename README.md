@@ -2,7 +2,7 @@
 
 This repository contains example BGP/Web configurations of PoPs used by AS400671 (https://stypr.network/).
 
-Decided to open-source it for everyone's sake.. 
+Decided to open-source it for everyone's sake.
 
 Please note that some constants and variables were redacted for security reasons.
 
@@ -57,9 +57,9 @@ You might want to edit `/etc/default/rpki-client` and `systemctl edit rpki-clien
 
 ### IRR Filtering
 
-RPKI has been enabled for the setup and bgpq4 (https://github.com/bgp/bgpq4) are enabled for direct peers and customers. 
+RPKI is already enabled for the setup. But we also utilize bgpq4 (https://github.com/bgp/bgpq4) for direct peers and customers. This is to ensure that 
 
-You might want to check `bird/config/irr/renew.sh`, `bird/config/bird.conf` and `bird/config/bgp/cloudflare.conf` to see how this works.
+You might want to check `bird/config/irr/renew.sh`, `bird/config/bird.conf` and `bird/config/bgp/cloudflare.conf` to see how this works for clients.
 
 ### Debugging Traffics
 
