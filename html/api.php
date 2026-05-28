@@ -16,7 +16,6 @@ declare(strict_types=1);
     * ?method=traffic
     * ?method=ping&target=1.1.1.1
     * ?method=traceroute&target=1.1.1.1
-    * ?method=bgp_status
     * ?method=bgp_route_for&target=1.1.1.1
     * ?method=connectivity
 
@@ -35,7 +34,7 @@ define("BIRD_MASTER4",    "static5"); // Usually static1, check via `birdc show 
 define("BIRD_MASTER6",    "static4"); // Usually static2, check via `birdc show proto`
 define("SOURCE_IPV4",     get_interface_ip(NETWORK4_ID));
 define("SOURCE_IPV6",     get_interface_ip(NETWORK6_ID, true));
-define("CURRENT_VERSION", "v1.4.1-260527");
+define("CURRENT_VERSION", "v1.4.2-260528");
 define("ENABLE_CACHE",    true);
 define("CORS_HOST",       "https://stypr.network"); // Change to dashboard domain
 
@@ -223,9 +222,47 @@ function ip_version(string $ip): string
     return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false ? "6" : "";
 }
 
+function ip_in_cidr(string $ip, string $base, int $bits): bool
+{
+    $packed_ip   = inet_pton($ip);
+    $packed_base = inet_pton($base);
+    if ($packed_ip === false || $packed_base === false || strlen($packed_ip) !== strlen($packed_base)) {
+        return false;
+    }
+    $full_bytes = intdiv($bits, 8);
+    $rem_bits   = $bits % 8;
+    if (substr($packed_ip, 0, $full_bytes) !== substr($packed_base, 0, $full_bytes)) {
+        return false;
+    }
+    if ($rem_bits === 0) {
+        return true;
+    }
+    $mask = (0xFF << (8 - $rem_bits)) & 0xFF;
+    return (ord($packed_ip[$full_bytes]) & $mask) === (ord($packed_base[$full_bytes]) & $mask);
+}
+
 function is_public_ip(string $ip): bool
 {
-    return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
+        return false;
+    }
+    static $extra = [
+        ['100.64.0.0',   10],  // RFC 6598  CGNAT
+        ['192.0.0.0',    24],  // RFC 6890  IETF Protocol
+        ['192.0.2.0',    24],  // RFC 5737  TEST-NET-1
+        ['198.18.0.0',   15],  // RFC 2544  Benchmarking
+        ['198.51.100.0', 24],  // RFC 5737  TEST-NET-2
+        ['203.0.113.0',  24],  // RFC 5737  TEST-NET-3
+        ['2001:db8::',   32],  // RFC 3849  Documentation
+        ['2001::',       32],  // RFC 4380  Teredo
+        ['2002::',       16],  // RFC 3056  6to4
+    ];
+    foreach ($extra as [$base, $bits]) {
+        if (ip_in_cidr($ip, $base, $bits)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 function resolve_target(string $argument): array|false
@@ -388,6 +425,7 @@ function handle_connectivity(SQLite3 $db): array
 
 /* --- Bootstrap --- */
 
+// if you use systemd hardening `/tmp` will be sandboxed, check bird/scripts/systemd-hardening/
 $cache_db = new SQLite3("/tmp/api_cache.db");
 $cache_db->exec(
     "CREATE TABLE IF NOT EXISTS cache (id INTEGER PRIMARY KEY, timestamp INTEGER, method TEXT, argument TEXT, result TEXT);"
@@ -456,7 +494,6 @@ $result = match($method) {
     "ping"             => handle_probe("ping",       $cache_db, $method, $target_data),
     "traceroute"       => handle_probe("traceroute", $cache_db, $method, $target_data),
     "bgp_announcement" => handle_birdc($cache_db, $method, $argument, "show static " . BIRD_MASTER4, "show static " . BIRD_MASTER6),
-    "bgp_status"       => handle_birdc($cache_db, $method, $argument, "show proto all"),
     "bgp_route_for"    => handle_bgp_route_for($cache_db, $method, $argument),
     "connectivity"     => handle_connectivity($cache_db),
     default            => err("Unknown method"),
