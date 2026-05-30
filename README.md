@@ -19,7 +19,9 @@ Please remove accordingly when the error appears on your machine.
 ## Technologies used for PoPs
 
 * BIRD
-    * 3.3.0 and higher: [Manually compiled](./bird/scripts/upgrade-latest.sh)
+    * 3.3.0 and higher
+        - Starting from May 30 2026, AS400671 uses [official repo](https://pkg.labs.nic.cz/doc/?project=bird) from nic.cz to install and upgrade the latest version. It's secure and better.
+        - You may also use [manually compiled](./bird/scripts/install-latest.sh) ones.
     * RPKI (RFC6811, RFC8893) check is implemented with `rpki-client`
     * BGP Large Communities (RFC8092) implemented (Check https://stypr.network/#community)
     * Route Leak Prevention and Detection (RFC9234) added for [bird](https://bird.nic.cz/doc/bird-3.3.0.html#bgp-local-role)

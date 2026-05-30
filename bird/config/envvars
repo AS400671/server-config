@@ -1,3 +1,4 @@
 BIRD_RUN_USER=bird
 BIRD_RUN_GROUP=bird
 #BIRD_ARGS=
+# /etc/bird/gretap.sh 2>/dev/null
